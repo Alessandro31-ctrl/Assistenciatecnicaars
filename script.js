@@ -1,3 +1,23 @@
+// ==========================================
+// CONFIGURAÇÃO DO FIREBASE
+// ==========================================
+const firebaseConfig = {
+  apiKey: "AIzaSyAPy_lq_k9xtH2b7VyxeEObeO-1ChiZMXo",
+  authDomain: "assistencia-tecnica-ars.firebaseapp.com",
+  projectId: "assistencia-tecnica-ars",
+  storageBucket: "assistencia-tecnica-ars.firebasestorage.app",
+  messagingSenderId: "173444750561",
+  appId: "1:173444750561:web:399ffcbd030a26eaa16ba0",
+  measurementId: "G-XR19TE1XYZ"
+};
+
+// Inicializa Firebase
+if (!firebase.apps.length) {
+  firebase.initializeApp(firebaseConfig);
+}
+const auth = firebase.auth();
+const db = firebase.firestore();
+
 let clientesData = [];
 let estoqueData = [];
 let orcamentosData = [];
@@ -10,102 +30,147 @@ let chartFinancasInstance = null;
 let chartLucroPieInstance = null;
 let insumoSelecionado = null;
 
-// Inicialização
+// ==========================================
+// CONTROLE DE AUTENTICAÇÃO E INICIALIZAÇÃO
+// ==========================================
 document.addEventListener("DOMContentLoaded", () => {
-  // Ajusta data padrão nos formulários para HOJE
   const hoje = new Date().toISOString().split('T')[0];
   if (document.getElementById('orc-data')) document.getElementById('orc-data').value = hoje;
   if (document.getElementById('os-data')) document.getElementById('os-data').value = hoje;
   if (document.getElementById('venda-data')) document.getElementById('venda-data').value = hoje;
 
-  const formInsumo = document.getElementById('formInsumo');
-  if (formInsumo) {
-    formInsumo.onsubmit = salvarInsumo;
-  }
-  
-  const btnExcluir = document.getElementById('btnExcluirInsumo');
-  if (btnExcluir) {
-    btnExcluir.onclick = excluirInsumo;
-  }
-  
-  carregarTodosDados();
+  // Monitora o estado da sessão do Firebase
+  auth.onAuthStateChanged(user => {
+    if (user) {
+      document.getElementById('login-screen').style.display = 'none';
+      document.getElementById('app-wrapper').style.display = 'flex';
+      carregarTodosDados();
+    } else {
+      document.getElementById('login-screen').style.display = 'flex';
+      document.getElementById('app-wrapper').style.display = 'none';
+    }
+  });
 });
+
+async function autenticarUsuario(e) {
+  if (e) e.preventDefault();
+
+  const emailInput = document.getElementById('login-email');
+  const senhaInput = document.getElementById('login-senha');
+
+  const email = emailInput ? emailInput.value.trim() : '';
+  const senha = senhaInput ? senhaInput.value : '';
+
+  if (!email || !senha) {
+    alert("Por favor, preencha o e-mail e a senha.");
+    return;
+  }
+
+  try {
+    const userCredential = await auth.signInWithEmailAndPassword(email, senha);
+    console.log("Usuário autenticado:", userCredential.user);
+  } catch (error) {
+    console.error("Erro na autenticação:", error);
+    let mensagem = "Falha ao realizar login.";
+    if (error.code === 'auth/user-not-found' || error.code === 'auth/wrong-password' || error.code === 'auth/invalid-credential') {
+      mensagem = "E-mail ou senha incorretos!";
+    } else if (error.code === 'auth/invalid-email') {
+      mensagem = "E-mail digitado é inválido!";
+    } else if (error.code === 'auth/too-many-requests') {
+      mensagem = "Muitas tentativas sem sucesso. Aguarde um instante.";
+    } else {
+      mensagem = `Erro (${error.code}): ${error.message}`;
+    }
+    alert(mensagem);
+  }
+}
+
+function fazerLogout() {
+  auth.signOut();
+}
 
 function navigate(pagina) {
   document.querySelectorAll('.page-section').forEach(sec => sec.classList.remove('active'));
-  document.querySelectorAll('.nav-btn').forEach(btn => btn.classList.remove('active'));
-  
+  document.querySelectorAll('.nav-btn, .mobile-nav-btn').forEach(btn => btn.classList.remove('active'));
+
   document.getElementById(`sec-${pagina}`).classList.add('active');
-  if (event && event.target) event.target.classList.add('active');
+
+  document.querySelectorAll(`.nav-btn[onclick="navigate('${pagina}')"]`).forEach(b => b.classList.add('active'));
+  document.querySelectorAll(`.mobile-nav-btn[onclick="navigate('${pagina}')"]`).forEach(b => b.classList.add('active'));
 
   if (pagina === 'dashboard') carregarDashboard();
 }
 
-function carregarTodosDados() {
-  carregarClientes();
-  carregarEstoque();
-  carregarOrcamentos();
-  carregarOS();
-  carregarVendas();
-  carregarInsumos();
+// ==========================================
+// HELPERS FIRESTORE (REMPLAÇAM O APIFETCH)
+// ==========================================
+async function getCollectionData(colecao) {
+  try {
+    const snapshot = await db.collection(colecao).get();
+    return snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+  } catch (err) {
+    console.error(`Erro ao carregar coleção ${colecao}:`, err);
+    return [];
+  }
+}
+
+async function saveDocument(colecao, id, dados) {
+  if (id) {
+    await db.collection(colecao).doc(String(id)).update(dados);
+    return id;
+  } else {
+    const ref = await db.collection(colecao).add(dados);
+    return ref.id;
+  }
+}
+
+async function deleteDocument(colecao, id) {
+  await db.collection(colecao).doc(String(id)).delete();
+}
+
+async function carregarTodosDados() {
+  await Promise.all([
+    carregarClientes(),
+    carregarEstoque(),
+    carregarOrcamentos(),
+    carregarOS(),
+    carregarVendas(),
+    carregarInsumos()
+  ]);
   carregarDashboard();
 }
 
-// Helper para chamadas API
-async function apiFetch(url, method = 'GET', body = null) {
-  const options = { method, headers: { 'Content-Type': 'application/json' } };
-  if (body) options.body = JSON.stringify(body);
-  const res = await fetch(url, options);
-  return await res.json();
-}
-
-// Helper de verificação de período (YYYY-MM-DD ou DD/MM/YYYY)
 function pertenceAoPeriodo(dataStr, mesFiltro, anoFiltro) {
   if (!dataStr) return true;
-
-  let ano = '';
-  let mes = '';
+  let ano = '', mes = '';
 
   if (dataStr.includes('-')) {
     const partes = dataStr.split('T')[0].split('-');
-    ano = partes[0];
-    mes = partes[1];
+    ano = partes[0]; mes = partes[1];
   } else if (dataStr.includes('/')) {
     const partes = dataStr.split('/');
-    ano = partes[2];
-    mes = partes[1];
+    ano = partes[2]; mes = partes[1];
   }
 
   if (anoFiltro && ano !== anoFiltro) return false;
   if (mesFiltro && mes !== mesFiltro) return false;
-
   return true;
 }
 
 // ==========================================
-// CARREGAMENTO DO DASHBOARD / PAINEL
+// DASHBOARD
 // ==========================================
 async function carregarDashboard() {
   const mes = document.getElementById('dash-filter-mes')?.value || '';
   const ano = document.getElementById('dash-filter-ano')?.value || new Date().getFullYear().toString();
 
-  // 1. Carrega dados caso ainda não estejam na memória
-  if (!clientesData || clientesData.length === 0) if (typeof carregarClientes === 'function') await carregarClientes();
-  if (!osData || osData.length === 0) if (typeof carregarOS === 'function') await carregarOS();
-  if (!vendasData || vendasData.length === 0) if (typeof carregarVendas === 'function') await carregarVendas();
-  if (!estoqueData || estoqueData.length === 0) if (typeof carregarEstoque === 'function') await carregarEstoque();
-  if (!insumosData || insumosData.length === 0) if (typeof carregarInsumos === 'function') await carregarInsumos();
-
-  let totalEntradaVendas = 0;       
+  let totalEntradaVendas = 0;
   let lucroMaoObra = 0;
   let lucroPecas = 0;
-  let custoPecasVendidas = 0; 
+  let custoPecasVendidas = 0;
   let qtdMaoObra = 0;
 
-  // 2. FILTRO DE ORDENS DE SERVIÇO (Mão de Obra)
-  const ordensFiltradas = (osData || []).filter(os => 
-    pertenceAoPeriodo(os.data || os.dataDoc || os.created_at, mes, ano)
-  );
+  const ordensFiltradas = (osData || []).filter(os => pertenceAoPeriodo(os.data || os.dataDoc || os.created_at, mes, ano));
 
   ordensFiltradas.forEach(os => {
     const valMaoObra = parseFloat(os.valor_mao_obra || os.valMaoObra || os.maoObra || 0);
@@ -115,140 +180,87 @@ async function carregarDashboard() {
     }
   });
 
+  const vendasFiltradas = (vendasData || []).filter(v => pertenceAoPeriodo(v.data || v.dataDoc || v.created_at, mes, ano));
+  let totalQtdPecasVendidas = 0;
 
-  // 3. FILTRO DE VENDAS
-const vendasFiltradas = (vendasData || []).filter(v => 
-  pertenceAoPeriodo(v.data || v.dataDoc || v.created_at, mes, ano)
-);
+  vendasFiltradas.forEach(v => {
+    const totalVenda = parseFloat(v.valor_total || v.valorTotal || v.total || 0);
+    totalEntradaVendas += totalVenda;
 
-let totalQtdPecasVendidas = 0; // Quantidade total de peças vendidas
+    let pecasArray = v.pecas_json || v.itens || [];
+    if (typeof pecasArray === 'string') {
+      try { pecasArray = JSON.parse(pecasArray); } catch (e) { pecasArray = []; }
+    }
 
-vendasFiltradas.forEach(v => {
-  const totalVenda = parseFloat(v.valor_total || v.valorTotal || v.total || 0);
-  totalEntradaVendas += totalVenda;
+    if (pecasArray.length > 0) {
+      pecasArray.forEach(item => {
+        const qtd = parseFloat(item.quantidade || item.qtd || 1);
+        totalQtdPecasVendidas += qtd;
+        let precoVendaItem = parseFloat(item.preco_venda || item.precoVenda || item.preco_unitario || item.valor_unitario || 0);
 
-  let pecasArray = [];
-  try {
-    pecasArray = typeof v.pecas_json === 'string' ? JSON.parse(v.pecas_json || '[]') : (v.pecas_json || v.itens || []);
-  } catch (e) {
-    pecasArray = v.itens || [];
-  }
-
-  if (pecasArray.length > 0) {
-    pecasArray.forEach(item => {
-      const qtd = parseFloat(item.quantidade || item.qtd || 1);
-      totalQtdPecasVendidas += qtd; // Soma a quantidade de itens vendidos
-
-      let precoVendaItem = parseFloat(item.preco_venda || item.precoVenda || item.preco_unitario || item.preco || item.valor || 0);
-      
-      if (precoVendaItem === 0 && totalVenda > 0) {
-        precoVendaItem = totalVenda / pecasArray.length;
-      }
-
-      let precoCustoItem = parseFloat(item.preco_custo || item.precoCusto || 0);
-      if (precoCustoItem === 0 && (item.id || item.peca_id)) {
-        const itemEstoque = (estoqueData || []).find(e => e.id == (item.id || item.peca_id));
-        if (itemEstoque) {
-          precoCustoItem = parseFloat(itemEstoque.preco_custo || itemEstoque.precoCusto || 0);
+        if (precoVendaItem === 0 && totalVenda > 0) {
+          precoVendaItem = totalVenda / pecasArray.length;
         }
-      }
 
-      const custoTotalDesteItem = precoCustoItem * qtd;
-      custoPecasVendidas += custoTotalDesteItem;
+        let precoCustoItem = parseFloat(item.preco_custo || item.precoCusto || 0);
+        if (precoCustoItem === 0 && (item.id || item.peca_id)) {
+          const itemEstoque = (estoqueData || []).find(e => String(e.id) === String(item.id || item.peca_id));
+          if (itemEstoque) precoCustoItem = parseFloat(itemEstoque.preco_custo || 0);
+        }
 
-      const lucroUnitario = precoVendaItem - precoCustoItem;
-      lucroPecas += (lucroUnitario * qtd);
-    });
-  } else {
-    lucroPecas += totalVenda;
-    totalQtdPecasVendidas += 1;
-  }
-});
+        const custoTotalDesteItem = precoCustoItem * qtd;
+        custoPecasVendidas += custoTotalDesteItem;
+        const lucroUnitario = precoVendaItem - precoCustoItem;
+        lucroPecas += (lucroUnitario * qtd);
+      });
+    } else {
+      lucroPecas += totalVenda;
+      totalQtdPecasVendidas += 1;
+    }
+  });
 
-  // 4. ESTOQUE: Custo de aquisições no mês selecionado
   let custoEntradaEstoqueMes = 0;
   let totalCustoLoja = 0;
   let totalCustoCliente = 0;
 
   (estoqueData || []).forEach(item => {
     const dataEntradaPeca = item.data_entrada || item.created_at || item.data;
-    const precoCusto = parseFloat(item.preco_custo || item.precoCusto || item.custo || 0);
-    const qtdEntrada = parseFloat(item.qtd_entrada || item.entrada || item.quantidade || 1);
+    const precoCusto = parseFloat(item.preco_custo || 0);
+    const qtdEntrada = parseFloat(item.quantidade || item.qtd_entrada || 1);
     const custoItem = precoCusto * qtdEntrada;
 
     if (pertenceAoPeriodo(dataEntradaPeca, mes, ano)) {
       custoEntradaEstoqueMes += custoItem;
-
       const tipoItem = (item.tipo || '').toString().trim().toLowerCase();
-      if (tipoItem === 'loja') {
-        totalCustoLoja += custoItem;
-      } else {
-        totalCustoCliente += custoItem;
-      }
+      if (tipoItem === 'loja') totalCustoLoja += custoItem;
+      else totalCustoCliente += custoItem;
     }
   });
 
   const lucroTotal = lucroMaoObra + lucroPecas;
   const custoTotalGeralPecas = custoPecasVendidas;
-
-  // Receita Real de Vendas + OS
   const totalEntradaFaturamento = lucroTotal + custoPecasVendidas;
 
-  // 5. ATUALIZA OS CARDS NO DOM
-  
   if (document.getElementById('lbl-dash-entrada')) document.getElementById('lbl-dash-entrada').innerText = `R$ ${totalEntradaFaturamento.toFixed(2)}`;
   if (document.getElementById('lbl-dash-entrada-lucro')) document.getElementById('lbl-dash-entrada-lucro').innerText = `R$ ${lucroTotal.toFixed(2)}`;
   if (document.getElementById('lbl-dash-entrada-custo')) document.getElementById('lbl-dash-entrada-custo').innerText = `R$ ${custoPecasVendidas.toFixed(2)}`;
-  if (document.getElementById('card-pecas-entrada')) {
-    document.getElementById('card-pecas-entrada').innerText = `R$ ${custoPecasVendidas.toFixed(2)}`;
-  }
-  // Lucro Bruto e Tooltips
+  if (document.getElementById('card-pecas-entrada')) document.getElementById('card-pecas-entrada').innerText = `R$ ${custoPecasVendidas.toFixed(2)}`;
   if (document.getElementById('lbl-dash-mao-obra')) document.getElementById('lbl-dash-mao-obra').innerText = `R$ ${lucroMaoObra.toFixed(2)}`;
   if (document.getElementById('lbl-dash-lucro-pecas')) document.getElementById('lbl-dash-lucro-pecas').innerText = `R$ ${lucroPecas.toFixed(2)}`;
   if (document.getElementById('lbl-dash-qtd-mao-obra')) document.getElementById('lbl-dash-qtd-mao-obra').innerText = qtdMaoObra;
- if (document.getElementById('lbl-dash-pecas-qtd-vendas')) {
-  document.getElementById('lbl-dash-pecas-qtd-vendas').innerText = totalQtdPecasVendidas;
-}
+  if (document.getElementById('lbl-dash-pecas-qtd-vendas')) document.getElementById('lbl-dash-pecas-qtd-vendas').innerText = totalQtdPecasVendidas;
   if (document.getElementById('card-lucro-bruto')) document.getElementById('card-lucro-bruto').innerText = `R$ ${lucroTotal.toFixed(2)}`;
-
-  // Entrada Peças / Custo
-  if (document.getElementById('lbl-dash-custo')) document.getElementById('lbl-dash-custo').innerText = `R$ ${custoPecasVendidas.toFixed(2)}`;
-  if (document.getElementById('lbl-dash-custo-loja')) document.getElementById('lbl-dash-custo-loja').innerText = `R$ ${totalCustoLoja.toFixed(2)}`;
-  if (document.getElementById('lbl-dash-custo-cliente')) document.getElementById('lbl-dash-custo-cliente').innerText = `R$ ${totalCustoCliente.toFixed(2)}`;
-
-  // Saídas Geral
   if (document.getElementById('lbl-dash-custo-saida-geral')) document.getElementById('lbl-dash-custo-saida-geral').innerText = `R$ ${custoTotalGeralPecas.toFixed(2)}`;
   if (document.getElementById('lbl-dash-custo-loja-saida')) document.getElementById('lbl-dash-custo-loja-saida').innerText = `R$ ${totalCustoLoja.toFixed(2)}`;
   if (document.getElementById('lbl-dash-custo-cliente-saida')) document.getElementById('lbl-dash-custo-cliente-saida').innerText = `R$ ${totalCustoCliente.toFixed(2)}`;
-
   if (document.getElementById('lbl-dash-qtd-clientes')) document.getElementById('lbl-dash-qtd-clientes').innerText = (clientesData || []).length;
-  
-  // 6. EXECUTA O CÁLCULO DOS CARDS DE FLUXO DE CAIXA E ALMOXARIFADO
-  let listaInsumosParaCards = insumosData;
-  if ((!listaInsumosParaCards || listaInsumosParaCards.length === 0) && typeof apiFetch === 'function') {
-    try {
-      listaInsumosParaCards = await apiFetch('/api/insumos');
-    } catch (err) {
-      listaInsumosParaCards = [];
-    }
-  }
 
-  atualizarCardsPainel(ordensFiltradas, estoqueData, listaInsumosParaCards || [], mes, ano, lucroTotal);
-
-  // 7. RENDERIZA OS GRÁFICOS E LINHA DO TEMPO
-  if (typeof renderizarGraficos === 'function') {
-    renderizarGraficos(totalEntradaFaturamento, custoPecasVendidas, lucroTotal, lucroMaoObra, lucroPecas);
-  }
-  if (typeof renderizarLinhaDoTempo === 'function') {
-    renderizarLinhaDoTempo(ordensFiltradas, vendasFiltradas);
-  }
+  atualizarCardsPainel(ordensFiltradas, estoqueData, insumosData || [], mes, ano, lucroTotal);
+  renderizarGraficos(totalEntradaFaturamento, custoPecasVendidas, lucroTotal, lucroMaoObra, lucroPecas);
+  renderizarLinhaDoTempo(ordensFiltradas, vendasFiltradas);
 }
 
-// ==========================================
-// CARDS FINANCEIROS E REINVESTIMENTOS (CORRIGIDO)
-// ==========================================
 function atualizarCardsPainel(listaOS, listaEstoque, listaInsumos = [], mes = '', ano = '', lucroBrutoCalculado = 0) {
-  const ordens = Array.isArray(listaOS) ? listaOS : [];
   const estoque = Array.isArray(listaEstoque) ? listaEstoque : [];
   const insumos = Array.isArray(listaInsumos) ? listaInsumos : [];
   const vendas = Array.isArray(vendasData) ? vendasData : [];
@@ -258,138 +270,74 @@ function atualizarCardsPainel(listaOS, listaEstoque, listaInsumos = [], mes = ''
     if (!dataStr) return false;
     const d = new Date(dataStr);
     if (isNaN(d.getTime())) return true;
-    const mesNum = parseInt(mes, 10);
-    const anoNum = parseInt(ano, 10);
-    return (d.getMonth() + 1) === mesNum && d.getFullYear() === anoNum;
+    return (d.getMonth() + 1) === parseInt(mes, 10) && d.getFullYear() === parseInt(ano, 10);
   };
 
-  // 1. COMPRAS DE ESTOQUE (LOJA) - ENTRADA BRUTA
   const totalEntradaEstoqueLoja = estoque
     .filter(item => {
       const tipo = (item.tipo || item.categoria || '').toString().trim().toLowerCase();
-      const dataItem = item.data_entrada || item.created_at || item.data;
-      return (tipo === 'loja' || tipo === 'balcao' || tipo === 'revenda') && ehDoPeriodo(dataItem);
+      return (tipo === 'loja' || tipo === 'balcao' || tipo === 'revenda') && ehDoPeriodo(item.data_entrada || item.created_at || item.data);
     })
-    .reduce((acc, item) => {
-      const precoCusto = parseFloat(item.preco_custo || item.precoCusto || item.custo || item.valor_custo || 0);
-      const qtdEntrada = parseFloat(item.qtd_entrada || item.quantidade || item.qtd || item.estoque || 1);
-      return acc + (precoCusto * qtdEntrada);
-    }, 0);
+    .reduce((acc, item) => acc + (parseFloat(item.preco_custo || 0) * parseFloat(item.quantidade || 1)), 0);
 
-  // 1b. SAÍDA DE ESTOQUE (LOJA) - CUSTO DAS PEÇAS VENDIDAS NO PERÍODO
   let totalSaidaCustoLoja = 0;
-  const vendasDoPeriodo = vendas.filter(v => ehDoPeriodo(v.data || v.dataDoc || v.created_at));
-
-  vendasDoPeriodo.forEach(v => {
-    let pecasArray = [];
-    try {
-      pecasArray = typeof v.pecas_json === 'string' ? JSON.parse(v.pecas_json || '[]') : (v.pecas_json || v.itens || []);
-    } catch (e) {
-      pecasArray = v.itens || [];
-    }
+  vendas.filter(v => ehDoPeriodo(v.data || v.created_at)).forEach(v => {
+    let pecasArray = v.pecas_json || v.itens || [];
+    if (typeof pecasArray === 'string') try { pecasArray = JSON.parse(pecasArray); } catch(e) { pecasArray = []; }
 
     pecasArray.forEach(item => {
-      const qtd = parseFloat(item.quantidade || item.qtd || 1);
-      let precoCustoItem = parseFloat(item.preco_custo || item.precoCusto || 0);
-
-      // Busca custo no estoque caso não esteja gravado na venda
-      const pecaEstoque = estoque.find(e => e.id == (item.id || item.peca_id));
-      if (precoCustoItem === 0 && pecaEstoque) {
-        precoCustoItem = parseFloat(pecaEstoque.preco_custo || pecaEstoque.precoCusto || 0);
-      }
-
+      const qtd = parseFloat(item.quantidade || 1);
+      let precoCustoItem = parseFloat(item.preco_custo || 0);
+      const pecaEstoque = estoque.find(e => String(e.id) === String(item.id || item.peca_id));
+      if (precoCustoItem === 0 && pecaEstoque) precoCustoItem = parseFloat(pecaEstoque.preco_custo || 0);
       const tipoPeca = pecaEstoque ? (pecaEstoque.tipo || '').toString().trim().toLowerCase() : 'loja';
-      
-      // Abate somente se a peça for da categoria 'loja'
-      if (tipoPeca === 'loja' || tipoPeca === 'balcao' || tipoPeca === 'revenda') {
-        totalSaidaCustoLoja += (precoCustoItem * qtd);
-      }
+      if (tipoPeca === 'loja' || tipoPeca === 'balcao') totalSaidaCustoLoja += (precoCustoItem * qtd);
     });
   });
 
-  // SALDO LÍQUIDO DO ESTOQUE
   const saldoInvestimentoEstoqueLoja = totalEntradaEstoqueLoja - totalSaidaCustoLoja;
 
-  // 2. PATRIMÔNIO EM ESTOQUE (Preço de Venda das peças atualmente paradas)
   const totalEstoqueVenda = estoque
-    .filter(item => {
-      const tipo = (item.tipo || '').toString().toLowerCase();
-      const cat = (item.categoria || '').toString().toLowerCase();
-      const qtd = parseFloat(item.quantidade || item.qtd || item.estoque || 0);
-      return tipo !== 'insumo' && cat !== 'ferramentas' && cat !== 'ferramenta' && qtd > 0;
-    })
-    .reduce((acc, item) => {
-      const qtd = parseFloat(item.quantidade || item.qtd || item.estoque || 0);
-      const precoVenda = parseFloat(item.preco_venda || item.precoVenda || item.preco || 0);
-      return acc + (qtd * precoVenda);
-    }, 0);
+    .filter(item => (item.tipo || '').toLowerCase() !== 'insumo' && parseFloat(item.quantidade || 0) > 0)
+    .reduce((acc, item) => acc + (parseFloat(item.quantidade || 0) * parseFloat(item.preco_venda || 0)), 0);
 
-  // 3. INSUMOS E BANCADA
-  const totalInsumosTabela = insumos
-    .filter(item => ehDoPeriodo(item.data || item.data_entrada || item.created_at))
-    .reduce((acc, item) => {
-      const qtd = parseFloat(item.quantidade || item.qtd || 1);
-      const precoCusto = parseFloat(item.preco_custo || item.precoCusto || item.custo || 0);
-      return acc + (qtd * precoCusto);
-    }, 0);
+  const totalInsumos = insumos
+    .filter(item => ehDoPeriodo(item.data || item.data_entrada))
+    .reduce((acc, item) => acc + (parseFloat(item.quantidade || 1) * parseFloat(item.preco_custo || 0)), 0);
 
-  const totalInsumosEstoque = estoque
-    .filter(item => {
-      const tipo = (item.tipo || '').toString().toLowerCase();
-      const cat = (item.categoria || '').toString().toLowerCase();
-      const dataItem = item.data_entrada || item.created_at || item.data;
-      return (tipo === 'insumo' || cat === 'ferramentas' || cat === 'ferramenta') && ehDoPeriodo(dataItem);
-    })
-    .reduce((acc, item) => {
-      const qtd = parseFloat(item.quantidade || item.qtd_entrada || item.qtd || 1);
-      const precoCusto = parseFloat(item.preco_custo || item.precoCusto || item.custo || 0);
-      return acc + (qtd * precoCusto);
-    }, 0);
+  const lucroLiquidoLivre = parseFloat(lucroBrutoCalculado || 0) - (totalInsumos + saldoInvestimentoEstoqueLoja);
 
-  const totalInsumos = totalInsumosTabela + totalInsumosEstoque;
-
-  // 4. LUCRO LÍQUIDO (LIVRE)
-  const lucroBruto = parseFloat(lucroBrutoCalculado || 0);
-  const lucroLiquidoLivre = lucroBruto - (totalInsumos + saldoInvestimentoEstoqueLoja);
-
-  // ATUALIZAÇÃO NO DOM
   const atualizarTexto = (id, valor) => {
     const el = document.getElementById(id);
     if (el) el.innerText = `R$ ${valor.toFixed(2)}`;
   };
 
-  // Valor principal do saldo do estoque da loja
   atualizarTexto('card-investimento-estoque-loja', saldoInvestimentoEstoqueLoja);
-
-  // Valores detalhados para o tooltip customizado
   atualizarTexto('lbl-dash-estoque-entrada', totalEntradaEstoqueLoja);
   atualizarTexto('lbl-dash-estoque-saida', totalSaidaCustoLoja);
-
   atualizarTexto('card-estoque-venda', totalEstoqueVenda);
   atualizarTexto('card-investimento-insumos', totalInsumos);
   atualizarTexto('card-lucro-liquido', lucroLiquidoLivre);
 }
 
-// 5. LINHA DO TEMPO
 function renderizarLinhaDoTempo(ordens, vendas) {
   const container = document.getElementById('dash-timeline-list');
   if (!container) return;
-
   const eventos = [];
 
   (ordens || []).forEach(os => {
     eventos.push({
-      data: os.data || os.dataDoc || os.created_at || '',
-      titulo: `Ordem de Serviço #${os.id || os.numero || ''}`,
-      descricao: `Cliente: ${os.cliente_nome || 'Não informado'} - Mão de Obra: R$ ${parseFloat(os.valor_mao_obra || 0).toFixed(2)}`,
+      data: os.data || '',
+      titulo: `Ordem de Serviço #${os.id || ''}`,
+      descricao: `Cliente: ${os.cliente_nome || 'N/I'} - Mão de Obra: R$ ${parseFloat(os.valor_mao_obra || 0).toFixed(2)}`,
       icone: '🔧'
     });
   });
 
   (vendas || []).forEach(v => {
     eventos.push({
-      data: v.data || v.dataDoc || v.created_at || '',
-      titulo: `Venda #${v.id || v.numero || ''}`,
+      data: v.data || '',
+      titulo: `Venda #${v.id || ''}`,
       descricao: `Total: R$ ${parseFloat(v.valor_total || 0).toFixed(2)}`,
       icone: '🛒'
     });
@@ -414,7 +362,6 @@ function renderizarLinhaDoTempo(ordens, vendas) {
   `).join('');
 }
 
-// 6. GRÁFICOS
 function renderizarGraficos(entrada, custo, lucroTotal, maoObra, lucroPecas) {
   const ctxBar = document.getElementById('chartFinancas')?.getContext('2d');
   if (ctxBar) {
@@ -423,11 +370,7 @@ function renderizarGraficos(entrada, custo, lucroTotal, maoObra, lucroPecas) {
       type: 'bar',
       data: {
         labels: ['Faturamento', 'Custos', 'Lucro Líquido'],
-        datasets: [{
-          label: 'Valores (R$)',
-          data: [entrada, custo, lucroTotal],
-          backgroundColor: ['#0284c7', '#ea580c', '#16a34a']
-        }]
+        datasets: [{ label: 'Valores (R$)', data: [entrada, custo, lucroTotal], backgroundColor: ['#0284c7', '#ea580c', '#16a34a'] }]
       },
       options: { responsive: true, plugins: { legend: { display: false } } }
     });
@@ -440,38 +383,18 @@ function renderizarGraficos(entrada, custo, lucroTotal, maoObra, lucroPecas) {
       type: 'doughnut',
       data: {
         labels: ['Mão de Obra', 'Peças / Acessórios'],
-        datasets: [{
-          data: [maoObra, lucroPecas],
-          backgroundColor: ['#9333ea', '#0d9488']
-        }]
+        datasets: [{ data: [maoObra, lucroPecas], backgroundColor: ['#9333ea', '#0d9488'] }]
       },
       options: { responsive: true }
     });
   }
 }
 
-function exportarRelatorioCSV() {
-  const csvContent = "data:text/csv;charset=utf-8," 
-    + "Indicador,Valor\n"
-    + `Entrada,${document.getElementById('lbl-dash-entrada').innerText}\n`
-    + `Custos,${document.getElementById('lbl-dash-custo').innerText}\n`
-    + `Lucro Mao Obra,${document.getElementById('lbl-dash-mao-obra').innerText}\n`
-    + `Lucro Pecas,${document.getElementById('lbl-dash-lucro-pecas').innerText}\n`
-    + `Lucro Bruto,${document.getElementById('card-lucro-bruto').innerText}\n`
-    + `Lucro Liquido Livre,${document.getElementById('card-lucro-liquido').innerText}\n`;
-
-  const encodedUri = encodeURI(csvContent);
-  const link = document.createElement("a");
-  link.setAttribute("href", encodedUri);
-  link.setAttribute("download", "relatorio_financeiro.csv");
-  document.body.appendChild(link);
-  link.click();
-  document.body.removeChild(link);
-}
-
-// --- CLIENTES ---
+// ==========================================
+// CLIENTES
+// ==========================================
 async function carregarClientes() {
-  clientesData = await apiFetch('/api/clientes');
+  clientesData = await getCollectionData('clientes');
   renderTabelaClientes();
   atualizarSelectsClientes();
 }
@@ -480,9 +403,9 @@ function renderTabelaClientes() {
   const tbody = document.querySelector('#tabela-clientes tbody');
   if (!tbody) return;
   tbody.innerHTML = '';
-  
+
   clientesData.forEach(c => {
-    const qtdServicos = vendasData.filter(v => v.cliente_id == c.id).length;
+    const qtdServicos = vendasData.filter(v => String(v.cliente_id) === String(c.id)).length;
     const tr = document.createElement('tr');
     tr.onclick = () => abrirModalClienteOpts(c);
     tr.innerHTML = `
@@ -491,7 +414,7 @@ function renderTabelaClientes() {
       <td>${c.telefone || '-'}</td>
       <td>${c.cpf || '-'}</td>
       <td>${c.endereco || '-'}</td>
-      <td>${c.status}</td>
+      <td>${c.status || 'Ativo'}</td>
       <td>${qtdServicos}</td>
     `;
     tbody.appendChild(tr);
@@ -509,15 +432,10 @@ async function salvarCliente(e) {
     status: document.getElementById('cli-status').value
   };
 
-  if (id) {
-    await apiFetch(`/api/clientes/${id}`, 'PUT', body);
-  } else {
-    await apiFetch('/api/clientes', 'POST', body);
-  }
-  
+  await saveDocument('clientes', id, body);
   document.getElementById('form-cliente').reset();
   document.getElementById('cli-id').value = '';
-  carregarClientes();
+  await carregarClientes();
 }
 
 function abrirModalClienteOpts(cliente) {
@@ -532,15 +450,15 @@ function editarCliente() {
   document.getElementById('cli-telefone').value = c.telefone || '';
   document.getElementById('cli-cpf').value = c.cpf || '';
   document.getElementById('cli-endereco').value = c.endereco || '';
-  document.getElementById('cli-status').value = c.status;
+  document.getElementById('cli-status').value = c.status || 'Ativo';
   fecharModais();
 }
 
 async function excluirCliente() {
   if (confirm(`Deseja excluir o cliente ${itemSelecionado.nome}?`)) {
-    await apiFetch(`/api/clientes/${itemSelecionado.id}`, 'DELETE');
+    await deleteDocument('clientes', itemSelecionado.id);
     fecharModais();
-    carregarClientes();
+    await carregarClientes();
   }
 }
 
@@ -552,13 +470,11 @@ function atualizarSelectsClientes() {
   });
 }
 
-// --- ESTOQUE ---
+// ==========================================
+// ESTOQUE
+// ==========================================
 async function carregarEstoque() {
-  if (!vendasData || vendasData.length === 0) {
-    if (typeof carregarVendas === 'function') await carregarVendas();
-  }
-
-  estoqueData = await apiFetch('/api/estoque');
+  estoqueData = await getCollectionData('estoque');
   renderTabelaEstoque();
 }
 
@@ -566,35 +482,29 @@ function formatarDataBR(dataStr) {
   if (!dataStr) return '-';
   const apenasData = dataStr.split('T')[0];
   const partes = apenasData.split('-');
-  if (partes.length === 3) {
-    return `${partes[2]}/${partes[1]}/${partes[0]}`;
-  }
-  return dataStr;
+  return partes.length === 3 ? `${partes[2]}/${partes[1]}/${partes[0]}` : dataStr;
 }
 
 function renderTabelaEstoque(dadosFiltrados = null) {
   const tbody = document.querySelector('#tabela-estoque tbody');
   if (!tbody) return;
   tbody.innerHTML = '';
-  
-  const listaParaExibir = dadosFiltrados || estoqueData || [];
 
-  listaParaExibir.forEach(e => {
+  const lista = dadosFiltrados || estoqueData || [];
+
+  lista.forEach(e => {
     const qtdEntrada = parseInt(e.quantidade || 0, 10);
     let qtdSaida = 0;
 
     if (Array.isArray(vendasData)) {
       vendasData.forEach(v => {
-        try {
-          const pecas = typeof v.pecas_json === 'string' ? JSON.parse(v.pecas_json || '[]') : (v.pecas_json || []);
-          pecas.forEach(p => {
-            if (p.peca_id == e.id || p.id == e.id) {
-              qtdSaida += parseInt(p.quantidade || 0, 10);
-            }
-          });
-        } catch (err) {
-          console.error("Erro ao calcular saída do item:", err);
-        }
+        let pecas = v.pecas_json || [];
+        if (typeof pecas === 'string') try { pecas = JSON.parse(pecas); } catch (err) { pecas = []; }
+        pecas.forEach(p => {
+          if (String(p.peca_id || p.id) === String(e.id)) {
+            qtdSaida += parseInt(p.quantidade || 0, 10);
+          }
+        });
       });
     }
 
@@ -605,9 +515,7 @@ function renderTabelaEstoque(dadosFiltrados = null) {
 
     const tr = document.createElement('tr');
     tr.onclick = () => abrirModalEstoque(e);
-    
     const corSaldo = saldo <= 0 ? 'color: red;' : 'color: green;';
-    const dataEntradaFormatada = formatarDataBR(e.data_entrada || e.created_at);
 
     tr.innerHTML = `
       <td>${e.id}</td>
@@ -620,37 +528,26 @@ function renderTabelaEstoque(dadosFiltrados = null) {
       <td>R$ ${margem}</td>
       <td>${e.tipo || ''}</td>
       <td>${e.disponibilidade || ''}</td>
-      <td>${dataEntradaFormatada}</td>
+      <td>${formatarDataBR(e.data_entrada || e.created_at)}</td>
     `;
     tbody.appendChild(tr);
   });
 }
 
 function filtrarEstoque(termo) {
-  if (!termo) {
-    renderTabelaEstoque();
-    return;
-  }
-
+  if (!termo) return renderTabelaEstoque();
   const termoLower = termo.toLowerCase();
-  const filtrados = (estoqueData || []).filter(item => {
-    const desc = (item.descricao || '').toLowerCase();
-    const id = (item.id || '').toString();
-    const tipo = (item.tipo || '').toLowerCase();
-    const fornecedor = (item.fornecedor || '').toLowerCase();
-
-    return desc.includes(termoLower) || id.includes(termoLower) || tipo.includes(termoLower) || fornecedor.includes(termoLower);
-  });
-
+  const filtrados = (estoqueData || []).filter(item =>
+    (item.descricao || '').toLowerCase().includes(termoLower) ||
+    String(item.id).includes(termoLower) ||
+    (item.tipo || '').toLowerCase().includes(termoLower)
+  );
   renderTabelaEstoque(filtrados);
 }
 
 function abrirModalEstoque(item = null) {
   itemSelecionado = item;
-  const form = document.getElementById('form-estoque');
-  if (form) form.reset();
-
-  const inputData = document.getElementById('est-data-entrada');
+  document.getElementById('form-estoque').reset();
 
   if (item) {
     document.getElementById('est-modal-title').innerText = "Editar Peça / Acessório";
@@ -661,27 +558,16 @@ function abrirModalEstoque(item = null) {
     document.getElementById('est-quantidade').value = item.quantidade;
     document.getElementById('est-fornecedor').value = item.fornecedor || '';
     document.getElementById('est-categoria').value = item.categoria || '';
-    document.getElementById('est-tipo').value = item.tipo;
-    document.getElementById('est-disponibilidade').value = item.disponibilidade;
+    document.getElementById('est-tipo').value = item.tipo || 'Loja';
+    document.getElementById('est-disponibilidade').value = item.disponibilidade || 'Físico';
     document.getElementById('est-observacoes').value = item.observacoes || '';
-    
-    if (inputData) {
-      const dataVal = item.data_entrada || item.created_at || '';
-      inputData.value = dataVal ? dataVal.split('T')[0] : '';
-    }
-
-    const btnDel = document.getElementById('btn-del-est');
-    if (btnDel) btnDel.style.display = 'inline-block';
+    document.getElementById('est-data-entrada').value = item.data_entrada ? item.data_entrada.split('T')[0] : '';
+    document.getElementById('btn-del-est').style.display = 'inline-block';
   } else {
     document.getElementById('est-modal-title').innerText = "Cadastrar Peça / Acessório";
     document.getElementById('est-id').value = '';
-    
-    if (inputData) {
-      inputData.value = new Date().toISOString().split('T')[0];
-    }
-
-    const btnDel = document.getElementById('btn-del-est');
-    if (btnDel) btnDel.style.display = 'none';
+    document.getElementById('est-data-entrada').value = new Date().toISOString().split('T')[0];
+    document.getElementById('btn-del-est').style.display = 'none';
   }
 
   document.getElementById('modal-estoque').classList.add('active');
@@ -690,44 +576,35 @@ function abrirModalEstoque(item = null) {
 async function salvarEstoque(e) {
   if (e) e.preventDefault();
   const id = document.getElementById('est-id').value;
-  const dataEntradaInput = document.getElementById('est-data-entrada')?.value;
-
   const body = {
     descricao: document.getElementById('est-descricao').value,
     preco_custo: parseFloat(document.getElementById('est-preco-custo').value || 0),
     preco_venda: parseFloat(document.getElementById('est-preco-venda').value || 0),
-    quantidade: parseInt(document.getElementById('est-quantidade').value || 0),
+    quantidade: parseInt(document.getElementById('est-quantidade').value || 0, 10),
     fornecedor: document.getElementById('est-fornecedor').value,
     categoria: document.getElementById('est-categoria').value,
     tipo: document.getElementById('est-tipo').value,
     disponibilidade: document.getElementById('est-disponibilidade').value,
-    data_entrada: dataEntradaInput,
+    data_entrada: document.getElementById('est-data-entrada').value,
     observacoes: document.getElementById('est-observacoes').value
   };
 
-  try {
-    if (id) {
-      await apiFetch(`/api/estoque/${id}`, 'PUT', body);
-    } else {
-      await apiFetch('/api/estoque', 'POST', body);
-    }
-  } catch (err) {
-    console.error("Erro ao salvar estoque:", err);
-  }
-
+  await saveDocument('estoque', id, body);
   fecharModais();
-  carregarEstoque();
+  await carregarEstoque();
 }
 
 async function excluirEstoque() {
   if (itemSelecionado && confirm("Deseja excluir este item do estoque?")) {
-    await apiFetch(`/api/estoque/${itemSelecionado.id}`, 'DELETE');
+    await deleteDocument('estoque', itemSelecionado.id);
     fecharModais();
-    carregarEstoque();
+    await carregarEstoque();
   }
 }
 
-// --- LINHA DE PEÇAS NOS MODAIS ---
+// ==========================================
+// PEÇAS NOS MODAIS
+// ==========================================
 function adicionarLinhaPeca(containerId, pecaId = '', qtd = 1) {
   const container = document.getElementById(containerId);
   if (!container) return;
@@ -736,8 +613,8 @@ function adicionarLinhaPeca(containerId, pecaId = '', qtd = 1) {
 
   let optionsPecas = `<option value="">Mão de Obra Somente</option>`;
   estoqueData.forEach(e => {
-    const selected = e.id == pecaId ? 'selected' : '';
-    optionsPecas += `<option value="${e.id}" data-preco="${e.preco_venda}" ${selected}>${e.descricao} (R$ ${e.preco_venda.toFixed(2)})</option>`;
+    const selected = String(e.id) === String(pecaId) ? 'selected' : '';
+    optionsPecas += `<option value="${e.id}" data-preco="${e.preco_venda}" ${selected}>${e.descricao} (R$ ${parseFloat(e.preco_venda).toFixed(2)})</option>`;
   });
 
   row.innerHTML = `
@@ -761,24 +638,23 @@ function extrairPecasContainer(containerId) {
     const select = r.querySelector('.peca-select');
     const qtdInput = r.querySelector('.peca-qtd');
     const pecaId = select.value;
-    const qtd = parseInt(qtdInput.value || 1);
+    const qtd = parseInt(qtdInput.value || 1, 10);
 
     if (pecaId) {
       const option = select.options[select.selectedIndex];
       const precoVenda = parseFloat(option.getAttribute('data-preco') || 0);
-      
-      const pecaEstoque = (estoqueData || []).find(e => e.id == pecaId);
+      const pecaEstoque = (estoqueData || []).find(e => String(e.id) === String(pecaId));
       const precoCusto = pecaEstoque ? parseFloat(pecaEstoque.preco_custo || 0) : 0;
 
       valorPecas += precoVenda * qtd;
-      pecas.push({ 
-        peca_id: pecaId, 
+      pecas.push({
+        peca_id: pecaId,
         id: pecaId,
-        descricao: option.text.split(' (R$')[0], 
-        quantidade: qtd, 
+        descricao: option.text.split(' (R$')[0],
+        quantidade: qtd,
         preco_venda: precoVenda,
         preco_custo: precoCusto,
-        valor_unitario: precoVenda 
+        valor_unitario: precoVenda
       });
     }
   });
@@ -800,9 +676,11 @@ function calcularTotaisModal(containerId) {
   }
 }
 
-// --- ORÇAMENTOS ---
+// ==========================================
+// ORÇAMENTOS
+// ==========================================
 async function carregarOrcamentos() {
-  orcamentosData = await apiFetch('/api/orcamentos');
+  orcamentosData = await getCollectionData('orcamentos');
   renderTabelaOrcamentos();
 }
 
@@ -849,10 +727,9 @@ function abrirModalOrcamento(item = null) {
     document.getElementById('orc-solucao').value = item.solucao || '';
     document.getElementById('orc-observacoes').value = item.observacoes || '';
 
-    try {
-      const pecas = JSON.parse(item.pecas_json || '[]');
-      pecas.forEach(p => adicionarLinhaPeca('container-pecas-orc', p.peca_id, p.quantidade));
-    } catch (e) {}
+    let pecas = item.pecas_json || [];
+    if (typeof pecas === 'string') try { pecas = JSON.parse(pecas); } catch(e){}
+    pecas.forEach(p => adicionarLinhaPeca('container-pecas-orc', p.peca_id, p.quantidade));
 
     document.getElementById('btn-fat-orc').style.display = 'inline-block';
     document.getElementById('btn-pdf-orc').style.display = 'inline-block';
@@ -891,45 +768,39 @@ async function salvarOrcamento(e) {
     pecas_json: pecas
   };
 
-  if (id) {
-    await apiFetch(`/api/orcamentos/${id}`, 'PUT', body);
-  } else {
-    await apiFetch('/api/orcamentos', 'POST', body);
-  }
-
+  await saveDocument('orcamentos', id, body);
   fecharModais();
-  carregarOrcamentos();
+  await carregarOrcamentos();
 }
 
 async function excluirOrcamento() {
   if (confirm("Deseja excluir este orçamento?")) {
-    await apiFetch(`/api/orcamentos/${itemSelecionado.id}`, 'DELETE');
+    await deleteDocument('orcamentos', itemSelecionado.id);
     fecharModais();
-    carregarOrcamentos();
+    await carregarOrcamentos();
   }
 }
 
 function faturarOrcamento() {
   const o = itemSelecionado;
   fecharModais();
-  
   abrirModalVenda();
   document.getElementById('venda-cliente').value = o.cliente_id;
   document.getElementById('venda-aparelho').value = o.aparelho || '';
   document.getElementById('venda-tipo').value = 'Venda por Orçamento';
   document.getElementById('venda-observacoes').value = `Faturado do Orçamento #${o.id}.${o.observacoes || ''}`;
 
-  try {
-    const pecas = JSON.parse(o.pecas_json || '[]');
-    pecas.forEach(p => adicionarLinhaPeca('container-pecas-venda', p.peca_id, p.quantidade));
-  } catch (e) {}
-
+  let pecas = o.pecas_json || [];
+  if (typeof pecas === 'string') try { pecas = JSON.parse(pecas); } catch(e){}
+  pecas.forEach(p => adicionarLinhaPeca('container-pecas-venda', p.peca_id, p.quantidade));
   calcularTotaisModal('container-pecas-venda');
 }
 
-// --- OS (ORDEM DE SERVIÇO) ---
+// ==========================================
+// OS (ORDEM DE SERVIÇO)
+// ==========================================
 async function carregarOS() {
-  osData = await apiFetch('/api/os');
+  osData = await getCollectionData('os');
   renderTabelaOS();
 }
 
@@ -978,10 +849,9 @@ function abrirModalOS(item = null) {
     document.getElementById('os-solucao').value = item.solucao || '';
     document.getElementById('os-observacoes').value = item.observacoes || '';
 
-    try {
-      const pecas = JSON.parse(item.pecas_json || '[]');
-      pecas.forEach(p => adicionarLinhaPeca('container-pecas-os', p.peca_id, p.quantidade));
-    } catch (e) {}
+    let pecas = item.pecas_json || [];
+    if (typeof pecas === 'string') try { pecas = JSON.parse(pecas); } catch(e){}
+    pecas.forEach(p => adicionarLinhaPeca('container-pecas-os', p.peca_id, p.quantidade));
 
     document.getElementById('btn-fat-os').style.display = 'inline-block';
     document.getElementById('btn-pdf-os').style.display = 'inline-block';
@@ -1021,48 +891,40 @@ async function salvarOS(e) {
     pecas_json: pecas
   };
 
-  if (id) {
-    await apiFetch(`/api/os/${id}`, 'PUT', body);
-  } else {
-    await apiFetch('/api/os', 'POST', body);
-  }
-
+  await saveDocument('os', id, body);
   fecharModais();
-  carregarOS();
+  await carregarOS();
 }
 
 async function excluirOS() {
   if (confirm("Deseja excluir esta OS?")) {
-    await apiFetch(`/api/os/${itemSelecionado.id}`, 'DELETE');
+    await deleteDocument('os', itemSelecionado.id);
     fecharModais();
-    carregarOS();
+    await carregarOS();
   }
 }
 
 function faturarOS() {
   const o = itemSelecionado;
   fecharModais();
-
   abrirModalVenda();
   document.getElementById('venda-cliente').value = o.cliente_id;
   document.getElementById('venda-aparelho').value = o.aparelho || '';
   document.getElementById('venda-tipo').value = 'Venda por OS';
   document.getElementById('venda-observacoes').value = `Faturado da OS #${o.id}.${o.observacoes || ''}`;
 
-  try {
-    const pecas = JSON.parse(o.pecas_json || '[]');
-    pecas.forEach(p => adicionarLinhaPeca('container-pecas-venda', p.peca_id, p.quantidade));
-  } catch (e) {}
-
+  let pecas = o.pecas_json || [];
+  if (typeof pecas === 'string') try { pecas = JSON.parse(pecas); } catch(e){}
+  pecas.forEach(p => adicionarLinhaPeca('container-pecas-venda', p.peca_id, p.quantidade));
   calcularTotaisModal('container-pecas-venda');
 }
 
-// --- VENDAS ---
+// ==========================================
+// VENDAS
+// ==========================================
 async function carregarVendas() {
-  vendasData = await apiFetch('/api/vendas');
+  vendasData = await getCollectionData('vendas');
   renderTabelaVendas();
-  renderTabelaClientes();
-  renderTabelaEstoque();
 }
 
 function renderTabelaVendas() {
@@ -1098,10 +960,9 @@ function abrirModalVenda(item = null) {
     document.getElementById('venda-tipo').value = item.tipo_venda;
     document.getElementById('venda-observacoes').value = item.observacoes || '';
 
-    try {
-      const pecas = JSON.parse(item.pecas_json || '[]');
-      pecas.forEach(p => adicionarLinhaPeca('container-pecas-venda', p.peca_id, p.quantidade));
-    } catch (e) {}
+    let pecas = item.pecas_json || [];
+    if (typeof pecas === 'string') try { pecas = JSON.parse(pecas); } catch(e){}
+    pecas.forEach(p => adicionarLinhaPeca('container-pecas-venda', p.peca_id, p.quantidade));
 
     document.getElementById('btn-pdf-venda').style.display = 'inline-block';
     document.getElementById('btn-del-venda').style.display = 'inline-block';
@@ -1135,52 +996,29 @@ async function salvarVenda(e) {
     pecas_json: pecas
   };
 
-  if (id) {
-    await apiFetch(`/api/vendas/${id}`, 'PUT', body);
-  } else {
-    await apiFetch('/api/vendas', 'POST', body);
-  }
-
+  await saveDocument('vendas', id, body);
   fecharModais();
   await carregarVendas();
   await carregarEstoque();
   await carregarDashboard();
 }
 
-async function excluirVenda(id) {
-  const vendaId = id || (itemSelecionado ? itemSelecionado.id : null);
-
-  if (!vendaId) {
-    alert('Nenhuma venda selecionada para exclusão.');
-    return;
-  }
-
-  if (!confirm('Tem certeza que deseja excluir esta venda? Os itens retornarão ao estoque.')) {
-    return;
-  }
-
-  try {
-    const resposta = await fetch(`/api/vendas/${vendaId}`, { method: 'DELETE' });
-
-    if (resposta.ok) {
-      alert('Venda excluída e estoque estornado com sucesso!');
-      fecharModais();
-      await carregarVendas();
-      await carregarEstoque();
-      await carregarDashboard();
-    } else {
-      const erro = await resposta.json();
-      alert('Erro ao excluir venda: ' + (erro.error || 'Erro desconhecido.'));
-    }
-  } catch (err) {
-    console.error('Erro na requisição de exclusão:', err);
-    alert('Erro ao se comunicar com o servidor.');
+async function excluirVenda() {
+  if (!itemSelecionado) return;
+  if (confirm('Tem certeza que deseja excluir esta venda?')) {
+    await deleteDocument('vendas', itemSelecionado.id);
+    fecharModais();
+    await carregarVendas();
+    await carregarEstoque();
+    await carregarDashboard();
   }
 }
 
-// --- INSUMOS ---
+// ==========================================
+// INSUMOS
+// ==========================================
 async function carregarInsumos() {
-  insumosData = await apiFetch('/api/insumos');
+  insumosData = await getCollectionData('insumos');
   renderTabelaInsumos();
 }
 
@@ -1198,7 +1036,7 @@ function renderTabelaInsumos() {
       <td>${i.quantidade}</td>
       <td>R$ ${parseFloat(i.preco_custo || 0).toFixed(2)}</td>
       <td>${i.fornecedor || '-'}</td>
-      <td>${formatarDataBR(i.data)}</td>
+      <td>${formatarDataBR(i.data || i.data_entrada)}</td>
     `;
     tbody.appendChild(tr);
   });
@@ -1206,8 +1044,7 @@ function renderTabelaInsumos() {
 
 function abrirModalInsumo(item = null) {
   insumoSelecionado = item;
-  const form = document.getElementById('formInsumo');
-  if (form) form.reset();
+  document.getElementById('formInsumo').reset();
 
   if (item) {
     document.getElementById('ins-modal-title').innerText = "Editar Insumo";
@@ -1216,17 +1053,13 @@ function abrirModalInsumo(item = null) {
     document.getElementById('ins-quantidade').value = item.quantidade;
     document.getElementById('ins-preco-custo').value = item.preco_custo;
     document.getElementById('ins-fornecedor').value = item.fornecedor || '';
-    document.getElementById('ins-data').value = item.data ? item.data.split('T')[0] : '';
-
-    const btnDel = document.getElementById('btnExcluirInsumo');
-    if (btnDel) btnDel.style.display = 'inline-block';
+    document.getElementById('ins-data').value = item.data ? item.data.split('T')[0] : (item.data_entrada ? item.data_entrada.split('T')[0] : '');
+    document.getElementById('btnExcluirInsumo').style.display = 'inline-block';
   } else {
     document.getElementById('ins-modal-title').innerText = "Cadastrar Insumo";
     document.getElementById('ins-id').value = '';
     document.getElementById('ins-data').value = new Date().toISOString().split('T')[0];
-
-    const btnDel = document.getElementById('btnExcluirInsumo');
-    if (btnDel) btnDel.style.display = 'none';
+    document.getElementById('btnExcluirInsumo').style.display = 'none';
   }
 
   document.getElementById('modal-insumo').classList.add('active');
@@ -1235,36 +1068,33 @@ function abrirModalInsumo(item = null) {
 async function salvarInsumo(e) {
   if (e) e.preventDefault();
   const id = document.getElementById('ins-id').value;
-
   const body = {
     descricao: document.getElementById('ins-descricao').value,
-    quantidade: parseInt(document.getElementById('ins-quantidade').value || 1),
+    quantidade: parseInt(document.getElementById('ins-quantidade').value || 1, 10),
     preco_custo: parseFloat(document.getElementById('ins-preco-custo').value || 0),
     fornecedor: document.getElementById('ins-fornecedor').value,
-    data: document.getElementById('ins-data').value
+    data: document.getElementById('ins-data').value,
+    data_entrada: document.getElementById('ins-data').value
   };
 
-  if (id) {
-    await apiFetch(`/api/insumos/${id}`, 'PUT', body);
-  } else {
-    await apiFetch('/api/insumos', 'POST', body);
-  }
-
+  await saveDocument('insumos', id, body);
   fecharModais();
-  carregarInsumos();
-  carregarDashboard();
+  await carregarInsumos();
+  await carregarDashboard();
 }
 
 async function excluirInsumo() {
   if (insumoSelecionado && confirm("Deseja excluir este insumo?")) {
-    await apiFetch(`/api/insumos/${insumoSelecionado.id}`, 'DELETE');
+    await deleteDocument('insumos', insumoSelecionado.id);
     fecharModais();
-    carregarInsumos();
-    carregarDashboard();
+    await carregarInsumos();
+    await carregarDashboard();
   }
 }
 
-// --- UTILITÁRIOS: MODAIS E FILTRAGEM ---
+// ==========================================
+// UTILITÁRIOS E IMPRESSÃO
+// ==========================================
 function fecharModais() {
   document.querySelectorAll('.modal').forEach(m => m.classList.remove('active'));
 }
@@ -1272,33 +1102,42 @@ function fecharModais() {
 function filtrarTabela(tabelaId, termo) {
   const trs = document.querySelectorAll(`#${tabelaId} tbody tr`);
   const termLower = termo.toLowerCase();
-
   trs.forEach(tr => {
-    const text = tr.innerText.toLowerCase();
-    tr.style.display = text.includes(termLower) ? '' : 'none';
+    tr.style.display = tr.innerText.toLowerCase().includes(termLower) ? '' : 'none';
   });
 }
 
-// --- IMPRESSÃO / PDF ---
+function exportarRelatorioCSV() {
+  const csvContent = "data:text/csv;charset=utf-8,"
+    + "Indicador,Valor\n"
+    + `Entrada,${document.getElementById('lbl-dash-entrada').innerText}\n`
+    + `Lucro Bruto,${document.getElementById('card-lucro-bruto').innerText}\n`
+    + `Lucro Liquido Livre,${document.getElementById('card-lucro-liquido').innerText}\n`;
+
+  const encodedUri = encodeURI(csvContent);
+  const link = document.createElement("a");
+  link.setAttribute("href", encodedUri);
+  link.setAttribute("download", "relatorio_financeiro.csv");
+  document.body.appendChild(link);
+  link.click();
+  document.body.removeChild(link);
+}
+
 function gerarPDFOS() {
   const selectCliente = document.getElementById('os-cliente');
   const nomeCliente = selectCliente ? selectCliente.options[selectCliente.selectedIndex]?.text : 'AO CONSUMIDOR';
-
   const itens = [];
   const linhasPecas = document.querySelectorAll('#container-pecas-os .peca-row');
 
   linhasPecas.forEach((linha, index) => {
     const selectPeca = linha.querySelector('select');
     const inputQtd = linha.querySelector('input[type="number"]');
-
     const descPeca = selectPeca ? selectPeca.options[selectPeca.selectedIndex]?.text || 'Peça / Componente' : 'Peça';
     const qtd = inputQtd ? parseFloat(inputQtd.value) || 1 : 1;
-
     let valorUnitario = 0;
     if (selectPeca && selectPeca.options[selectPeca.selectedIndex]) {
       valorUnitario = parseFloat(selectPeca.options[selectPeca.selectedIndex].getAttribute('data-preco')) || 0;
     }
-
     itens.push({
       codigo: String(index + 1).padStart(4, '0'),
       descricao: descPeca,
@@ -1322,21 +1161,14 @@ function gerarPDFOS() {
     });
   }
 
-  const aparelho = document.getElementById('os-aparelho')?.value || 'N/I';
-  const problema = document.getElementById('os-problema')?.value || 'N/I';
-  const obsAdicional = document.getElementById('os-observacoes')?.value || '';
-
-  const observacaoFormatada = `Aparelho: ${aparelho} | Defeito: ${problema}${obsAdicional ? ' | Obs: ' + obsAdicional : ''}`;
-  const totalGeral = parseFloat(document.getElementById('lbl-os-val-total')?.innerText) || itens.reduce((acc, i) => acc + i.total, 0);
-
   const dadosOS = {
     numeroDoc: document.getElementById('os-id')?.value || '0001',
     dataDoc: document.getElementById('os-data')?.value || new Date().toLocaleDateString('pt-BR'),
     statusDoc: document.getElementById('os-status')?.value || 'Aberto',
-    observacao: observacaoFormatada,
+    observacao: `Aparelho: ${document.getElementById('os-aparelho')?.value || 'N/I'} | Defeito: ${document.getElementById('os-problema')?.value || 'N/I'}`,
     clienteNome: nomeCliente,
     itens: itens,
-    valorTotal: totalGeral,
+    valorTotal: parseFloat(document.getElementById('lbl-os-val-total')?.innerText) || 0,
     dataHoraImpressao: new Date().toLocaleString('pt-BR')
   };
 
@@ -1347,22 +1179,18 @@ function gerarPDFOS() {
 function gerarPDFOrcamento() {
   const selectCliente = document.getElementById('orc-cliente');
   const nomeCliente = selectCliente ? selectCliente.options[selectCliente.selectedIndex]?.text : 'AO CONSUMIDOR';
-
   const itens = [];
   const linhasPecas = document.querySelectorAll('#container-pecas-orc .peca-row');
 
   linhasPecas.forEach((linha, index) => {
     const selectPeca = linha.querySelector('select');
     const inputQtd = linha.querySelector('input[type="number"]');
-
     const descPeca = selectPeca ? selectPeca.options[selectPeca.selectedIndex]?.text || 'Peça / Componente' : 'Peça';
     const qtd = inputQtd ? parseFloat(inputQtd.value) || 1 : 1;
-
     let valorUnitario = 0;
     if (selectPeca && selectPeca.options[selectPeca.selectedIndex]) {
       valorUnitario = parseFloat(selectPeca.options[selectPeca.selectedIndex].getAttribute('data-preco')) || 0;
     }
-
     itens.push({
       codigo: String(index + 1).padStart(4, '0'),
       descricao: descPeca,
@@ -1375,10 +1203,9 @@ function gerarPDFOrcamento() {
 
   const valMaoObra = parseFloat(document.getElementById('orc-mao-obra')?.value) || 0;
   if (valMaoObra > 0) {
-    const descSolucao = document.getElementById('orc-solucao')?.value || 'Serviço / Mão de Obra Estimada';
     itens.push({
       codigo: 'SERV',
-      descricao: `MÃO DE OBRA / SERVIÇO: ${descSolucao}`,
+      descricao: `MÃO DE OBRA / SERVIÇO: ${document.getElementById('orc-solucao')?.value || 'Mão de Obra'}`,
       qtd: 1,
       un: 'SV',
       valorUnitario: valMaoObra,
@@ -1386,21 +1213,14 @@ function gerarPDFOrcamento() {
     });
   }
 
-  const aparelho = document.getElementById('orc-aparelho')?.value || 'N/I';
-  const problema = document.getElementById('orc-problema')?.value || 'N/I';
-  const obsAdicional = document.getElementById('orc-observacoes')?.value || '';
-
-  const observacaoFormatada = `Aparelho: ${aparelho} | Defeito Relatado: ${problema}${obsAdicional ? ' | Obs: ' + obsAdicional : ''}`;
-  const totalGeral = parseFloat(document.getElementById('lbl-orc-val-total')?.innerText) || itens.reduce((acc, i) => acc + i.total, 0);
-
   const dadosOrcamento = {
     numeroDoc: document.getElementById('orc-id')?.value || '0001',
     dataDoc: document.getElementById('orc-data')?.value || new Date().toLocaleDateString('pt-BR'),
     statusDoc: 'ORÇAMENTO',
-    observacao: observacaoFormatada,
+    observacao: `Aparelho: ${document.getElementById('orc-aparelho')?.value || 'N/I'} | Defeito: ${document.getElementById('orc-problema')?.value || 'N/I'}`,
     clienteNome: nomeCliente,
     itens: itens,
-    valorTotal: totalGeral,
+    valorTotal: parseFloat(document.getElementById('lbl-orc-val-total')?.innerText) || 0,
     dataHoraImpressao: new Date().toLocaleString('pt-BR')
   };
 
@@ -1411,22 +1231,18 @@ function gerarPDFOrcamento() {
 function gerarPDFVenda() {
   const selectCliente = document.getElementById('venda-cliente');
   const nomeCliente = selectCliente ? selectCliente.options[selectCliente.selectedIndex]?.text : 'AO CONSUMIDOR';
-
   const itens = [];
   const linhasPecas = document.querySelectorAll('#container-pecas-venda .peca-row');
 
   linhasPecas.forEach((linha, index) => {
     const selectPeca = linha.querySelector('select');
     const inputQtd = linha.querySelector('input[type="number"]');
-
     const descPeca = selectPeca ? selectPeca.options[selectPeca.selectedIndex]?.text || 'Item Vendido' : 'Item';
     const qtd = inputQtd ? parseFloat(inputQtd.value) || 1 : 1;
-
     let valorUnitario = 0;
     if (selectPeca && selectPeca.options[selectPeca.selectedIndex]) {
       valorUnitario = parseFloat(selectPeca.options[selectPeca.selectedIndex].getAttribute('data-preco')) || 0;
     }
-
     itens.push({
       codigo: String(index + 1).padStart(4, '0'),
       descricao: descPeca,
@@ -1437,21 +1253,14 @@ function gerarPDFVenda() {
     });
   });
 
-  const aparelho = document.getElementById('venda-aparelho')?.value || 'N/I';
-  const tipoVenda = document.getElementById('venda-tipo')?.value || 'Venda Direta';
-  const obsAdicional = document.getElementById('venda-observacoes')?.value || '';
-
-  const observacaoFormatada = `Tipo Venda: ${tipoVenda} | Aparelho: ${aparelho}${obsAdicional ? ' | Obs: ' + obsAdicional : ''}`;
-  const totalGeral = parseFloat(document.getElementById('lbl-venda-val-total')?.innerText) || itens.reduce((acc, i) => acc + i.total, 0);
-
   const dadosVenda = {
     numeroDoc: document.getElementById('venda-id')?.value || '0001',
     dataDoc: document.getElementById('venda-data')?.value || new Date().toLocaleDateString('pt-BR'),
     statusDoc: 'CONCLUÍDO',
-    observacao: observacaoFormatada,
+    observacao: `Tipo Venda: ${document.getElementById('venda-tipo')?.value || 'Venda Direta'}`,
     clienteNome: nomeCliente,
     itens: itens,
-    valorTotal: totalGeral,
+    valorTotal: parseFloat(document.getElementById('lbl-venda-val-total')?.innerText) || 0,
     dataHoraImpressao: new Date().toLocaleString('pt-BR')
   };
 
