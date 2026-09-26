@@ -1,0 +1,558 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Assistência Técnica - Gestão Online</title>
+  <link rel="stylesheet" href="style.css">
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.10.1/html2pdf.bundle.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+
+  <!-- SDKs do Firebase Compat v9+ -->
+  <script src="https://www.gstatic.com/firebasejs/9.22.0/firebase-app-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/9.22.0/firebase-auth-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/9.22.0/firebase-firestore-compat.js"></script>
+</head>
+
+<body>
+
+  <!-- TELA DE LOGIN -->
+  <div id="login-screen" class="login-container">
+    <div class="login-card">
+      <h2>ASSISTÊNCIA TÉCNICA</h2>
+      <p>Acesse o sistema de gestão</p>
+      <form id="form-login" onsubmit="autenticarUsuario(event)">
+        <input type="email" id="login-email" placeholder="E-mail *" required>
+        <input type="password" id="login-senha" placeholder="Senha *" required>
+        <button type="submit" class="btn-primary full-width">Entrar</button>
+      </form>
+    </div>
+  </div>
+
+  <!-- CONTEÚDO PRINCIPAL DA APLICAÇÃO -->
+  <div id="app-wrapper" class="app-container" style="display: none;">
+    
+    <!-- CABEÇALHO MÓVEL (TELMÓVEL) -->
+    <header class="mobile-header">
+      <span>ASSISTÊNCIA TÉCNICA</span>
+      <button class="btn-logout" onclick="fazerLogout()">Sair</button>
+    </header>
+
+    <!-- NAVEGAÇÃO LATERAL (DESKTOP) -->
+    <aside class="sidebar">
+      <div class="sidebar-header">
+        <h2>GESTÃO ONLINE</h2>
+      </div>
+      <nav class="sidebar-nav">
+        <button class="nav-btn active" onclick="navigate('dashboard')">📊 Painel</button>
+        <button class="nav-btn" onclick="navigate('clientes')">👥 Clientes</button>
+        <button class="nav-btn" onclick="navigate('estoque')">📦 Estoque</button>
+        <button class="nav-btn" onclick="navigate('orcamento')">📋 Orçamento</button>
+        <button class="nav-btn" onclick="navigate('os')">📝 OS</button>
+        <button class="nav-btn" onclick="navigate('vendas')">🛒 Vendas</button>
+        <button class="nav-btn" onclick="navigate('insumos')">🧪 Insumos</button>
+        <button class="nav-btn btn-logout-sidebar" onclick="fazerLogout()">🚪 Sair</button>
+      </nav>
+    </aside>
+
+    <!-- CONTEÚDO PRINCIPAL -->
+    <main class="main-content">
+      <header class="top-header desktop-only">
+        <h1>ASSISTÊNCIA TÉCNICA</h1>
+      </header>
+
+      <!-- Seção Painel -->
+      <section id="sec-dashboard" class="page-section active">
+        <div class="dash-controls-bar">
+          <div class="dash-filters">
+            <div class="filter-group">
+              <label for="dash-filter-mes">Período:</label>
+              <select id="dash-filter-mes" onchange="carregarDashboard()">
+                <option value="">Ano Todo</option>
+                <option value="01">Janeiro</option>
+                <option value="02">Fevereiro</option>
+                <option value="03">Março</option>
+                <option value="04">Abril</option>
+                <option value="05">Maio</option>
+                <option value="06">Junho</option>
+                <option value="07">Julho</option>
+                <option value="08">Agosto</option>
+                <option value="09">Setembro</option>
+                <option value="10">Outubro</option>
+                <option value="11">Novembro</option>
+                <option value="12">Dezembro</option>
+              </select>
+            </div>
+            <div class="filter-group">
+              <label for="dash-filter-ano">Ano:</label>
+              <input type="number" id="dash-filter-ano" value="2026" onchange="carregarDashboard()">
+            </div>
+          </div>
+          <div class="dash-actions">
+            <button class="btn-primary" onclick="window.print()">🖨️ Imprimir Painel</button>
+            <button class="btn-success" onclick="exportarRelatorioCSV()">📊 Baixar Relatório (CSV)</button>
+          </div>
+        </div>
+
+        <div class="dash-dashboard-layout">
+          <div class="dash-main-area">
+            <div class="dash-top-card">
+              <div class="card-kpi blue highlight-card main-faturamento has-tooltip">
+                <span class="kpi-label">ENTRADA (FATURAMENTO TOTAL)</span>
+                <h3 id="lbl-dash-entrada">R$ 0,00</h3>
+                <div class="custom-tooltip">
+                  <div class="tooltip-item"><span class="tooltip-label">ENTRADA DE LUCRO</span><strong id="lbl-dash-entrada-lucro">R$ 0,00</strong></div>
+                  <div class="tooltip-divider"></div>
+                  <div class="tooltip-item"><span class="tooltip-label">ENTRADA DE CUSTO</span><strong id="lbl-dash-entrada-custo">R$ 0,00</strong></div>
+                </div>
+              </div>
+            </div>
+
+            <div class="dash-middle-columns">
+              <div class="dash-sub-column left-sub">
+                <div class="column-title">ENTRADAS</div>
+                <div class="card-kpi green-border has-tooltip">
+                  <span class="kpi-label">LUCRO BRUTO</span>
+                  <h3 id="card-lucro-bruto">R$ 0,00</h3>
+                  <div class="custom-tooltip">
+                    <div class="tooltip-item"><span class="tooltip-label">LUCRO PEÇAS / VENDAS</span><strong id="lbl-dash-lucro-pecas">R$ 0,00</strong></div>
+                    <div class="tooltip-divider"></div>
+                    <div class="tooltip-item"><span class="tooltip-label">LUCRO MÃO DE OBRA</span><strong id="lbl-dash-mao-obra">R$ 0,00</strong></div>
+                    <div class="tooltip-divider"></div>
+                    <div class="tooltip-item"><span class="tooltip-label">QTD SERVIÇOS</span><strong id="lbl-dash-qtd-mao-obra">0</strong></div>
+                  </div>
+                </div>
+                <div class="card-kpi gray has-tooltip">
+                  <span class="kpi-label">Entrada Peças</span>
+                  <h3 id="card-pecas-entrada">R$ 0,00</h3>
+                  <div class="custom-tooltip">
+                    <div class="tooltip-item"><span class="tooltip-label">QTD VENDAS</span><strong id="lbl-dash-pecas-qtd-vendas">0</strong></div>
+                  </div>
+                </div>
+              </div>
+
+              <div class="dash-sub-column right-sub">
+                <div class="column-title">SAÍDAS</div>
+                <div class="card-kpi orange">
+                  <span class="kpi-label">Insumos / Bancada</span>
+                  <h3 id="card-investimento-insumos">R$ 0.00</h3>
+                </div>
+                <div class="card-kpi orange has-tooltip">
+                  <span class="kpi-label">Custo / Despesas Peças</span>
+                  <h3 id="lbl-dash-custo-saida-geral">R$ 0,00</h3>
+                  <div class="custom-tooltip">
+                    <div class="tooltip-item"><span class="tooltip-label">CUSTO LOJA</span><strong id="lbl-dash-custo-loja-saida">R$ 0,00</strong></div>
+                    <div class="tooltip-divider"></div>
+                    <div class="tooltip-item"><span class="tooltip-label">CUSTO CLIENTE</span><strong id="lbl-dash-custo-cliente-saida">R$ 0,00</strong></div>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <div class="dash-bottom-card">
+              <div class="card-kpi highlight-card green-highlight main-lucro-livre">
+                <span class="kpi-label">LUCRO LÍQUIDO (LIVRE)</span>
+                <h3 id="card-lucro-liquido">R$ 0.00</h3>
+              </div>
+            </div>
+          </div>
+
+          <div class="dash-sidebar-area">
+            <div class="column-title">GERENCIAMENTO</div>
+            <div class="card-kpi gray has-tooltip">
+              <span class="kpi-label">Compras de Estoque (Loja)</span>
+              <h3 id="card-investimento-estoque-loja">R$ 0,00</h3>
+              <div class="custom-tooltip">
+                <div class="tooltip-item"><span class="tooltip-label">ENTRADA (COMPRAS)</span><strong id="lbl-dash-estoque-entrada">R$ 0,00</strong></div>
+                <div class="tooltip-divider"></div>
+                <div class="tooltip-item"><span class="tooltip-label">SAÍDA (VENDAS)</span><strong id="lbl-dash-estoque-saida">R$ 0,00</strong></div>
+              </div>
+            </div>
+            <div class="card-kpi gray">
+              <span class="kpi-label">Patrimônio em Estoque (Venda)</span>
+              <h3 id="card-estoque-venda">R$ 0,00</h3>
+            </div>
+            <div class="card-kpi gray">
+              <span class="kpi-label">Clientes Cadastrados</span>
+              <h3 id="lbl-dash-qtd-clientes">0</h3>
+            </div>
+          </div>
+        </div>
+
+        <div class="dash-visual-grid">
+          <div class="chart-box">
+            <h4>Gráfico Comparativo (Entradas x Custos x Lucro)</h4>
+            <canvas id="chartFinancas"></canvas>
+          </div>
+          <div class="chart-box">
+            <h4>Distribuição de Lucro (Mão de Obra vs Peças)</h4>
+            <canvas id="chartLucroPie"></canvas>
+          </div>
+          <div class="timeline-box">
+            <h4>Linha do Tempo (Últimas Atividades)</h4>
+            <div id="dash-timeline-container">
+              <ul class="timeline-list" id="dash-timeline-list">
+                <li>Nenhuma atividade recente registrada.</li>
+              </ul>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- Seção Clientes -->
+      <section id="sec-clientes" class="page-section">
+        <div class="section-header"><h2>Clientes</h2></div>
+        <div class="form-container">
+          <form id="form-cliente" onsubmit="salvarCliente(event)">
+            <input type="hidden" id="cli-id">
+            <div class="form-grid">
+              <input type="text" id="cli-nome" placeholder="Nome *" required>
+              <input type="text" id="cli-telefone" placeholder="Telefone">
+              <input type="text" id="cli-cpf" placeholder="CPF">
+              <input type="text" id="cli-endereco" placeholder="Endereço">
+              <select id="cli-status">
+                <option value="Ativo">Ativo</option>
+                <option value="Inativo">Inativo</option>
+              </select>
+            </div>
+            <div style="margin-top: 10px; text-align: right;">
+              <button type="submit" class="btn-primary">Salvar Cliente</button>
+            </div>
+          </form>
+        </div>
+        <div class="search-bar">
+          <input type="text" id="search-clientes" placeholder="Procurar cliente..." onkeyup="filtrarTabela('tabela-clientes', this.value)">
+        </div>
+        <div class="table-wrapper">
+          <table id="tabela-clientes">
+            <thead>
+              <tr>
+                <th>ID</th>
+                <th>Nome</th>
+                <th>Telefone</th>
+                <th>CPF</th>
+                <th>Endereço</th>
+                <th>Status</th>
+                <th>Serviços</th>
+              </tr>
+            </thead>
+            <tbody></tbody>
+          </table>
+        </div>
+      </section>
+
+      <!-- Seção Estoque -->
+      <section id="sec-estoque" class="page-section">
+        <div class="section-header">
+          <h2>Estoque / Peças</h2>
+          <button class="btn-add" onclick="abrirModalEstoque()">+</button>
+        </div>
+        <div class="search-bar">
+          <input type="text" id="search-estoque" placeholder="Procurar no estoque..." onkeyup="filtrarEstoque(this.value)">
+        </div>
+        <div class="table-wrapper">
+          <table id="tabela-estoque">
+            <thead>
+              <tr>
+                <th>ID</th>
+                <th>Descrição</th>
+                <th>Entrada</th>
+                <th>Saída</th>
+                <th>Saldo</th>
+                <th>P. Custo</th>
+                <th>P. Venda</th>
+                <th>Margem</th>
+                <th>Tipo</th>
+                <th>Disponibilidade</th>
+                <th>Data Entrada</th>
+              </tr>
+            </thead>
+            <tbody></tbody>
+          </table>
+        </div>
+      </section>
+
+      <!-- Seção Orçamento -->
+      <section id="sec-orcamento" class="page-section">
+        <div class="section-header">
+          <h2>Orçamentos</h2>
+          <button class="btn-add" onclick="abrirModalOrcamento()">+</button>
+        </div>
+        <div class="search-bar">
+          <input type="text" id="search-orcamento" placeholder="Procurar orçamento..." onkeyup="filtrarTabela('tabela-orcamentos', this.value)">
+        </div>
+        <div class="table-wrapper">
+          <table id="tabela-orcamentos">
+            <thead>
+              <tr>
+                <th>ID</th>
+                <th>Cliente</th>
+                <th>Problema</th>
+                <th>Solução</th>
+                <th>Val.Peças</th>
+                <th>Mão Obra</th>
+                <th>Total</th>
+                <th>Data</th>
+              </tr>
+            </thead>
+            <tbody></tbody>
+          </table>
+        </div>
+      </section>
+
+      <!-- Seção OS -->
+      <section id="sec-os" class="page-section">
+        <div class="section-header">
+          <h2>Ordens de Serviço (OS)</h2>
+          <button class="btn-add" onclick="abrirModalOS()">+</button>
+        </div>
+        <div class="search-bar">
+          <input type="text" id="search-os" placeholder="Procurar OS..." onkeyup="filtrarTabela('tabela-os', this.value)">
+        </div>
+        <div class="table-wrapper">
+          <table id="tabela-os">
+            <thead>
+              <tr>
+                <th>ID</th><th>Cliente</th><th>Problema</th><th>Solução</th><th>Val.Peças</th><th>Mão Obra</th><th>Total</th><th>Data</th><th>Status</th>
+              </tr>
+            </thead>
+            <tbody></tbody>
+          </table>
+        </div>
+      </section>
+
+      <!-- Seção Vendas -->
+      <section id="sec-vendas" class="page-section">
+        <div class="section-header">
+          <h2>Vendas</h2>
+          <button class="btn-add" onclick="abrirModalVenda()">+</button>
+        </div>
+        <div class="search-bar">
+          <input type="text" id="search-vendas" placeholder="Procurar venda..." onkeyup="filtrarTabela('tabela-vendas', this.value)">
+        </div>
+        <div class="table-wrapper">
+          <table id="tabela-vendas">
+            <thead>
+              <tr>
+                <th>ID</th>
+                <th>Cliente</th>
+                <th>Tipo Venda</th>
+                <th>Val.Peças</th>
+                <th>Total</th>
+                <th>Data</th>
+              </tr>
+            </thead>
+            <tbody></tbody>
+          </table>
+        </div>
+      </section>
+
+      <!-- Seção Insumos -->
+      <section id="sec-insumos" class="page-section">
+        <div class="section-header">
+          <h2>Insumos e Consumíveis</h2>
+          <button class="btn-add" onclick="abrirModalInsumo()">+</button>
+        </div>
+        <div class="search-bar">
+          <input type="text" id="search-insumos" placeholder="Procurar insumos..." onkeyup="filtrarTabela('tabela-insumos', this.value)">
+        </div>
+        <div class="table-wrapper">
+          <table id="tabela-insumos">
+            <thead>
+              <tr>
+                <th>ID</th><th>Descrição</th><th>Quantidade</th><th>Preço de Custo</th><th>Fornecedor</th><th>Data</th>
+              </tr>
+            </thead>
+            <tbody></tbody>
+          </table>
+        </div>
+      </section>
+
+    </main>
+
+    <!-- NAVEGAÇÃO INFERIOR MÓVEL (TELMÓVEL) -->
+    <nav class="mobile-nav">
+      <button class="mobile-nav-btn active" onclick="navigate('dashboard')">📊 Painel</button>
+      <button class="mobile-nav-btn" onclick="navigate('clientes')">👥 Clientes</button>
+      <button class="mobile-nav-btn" onclick="navigate('estoque')">📦 Estoque</button>
+      <button class="mobile-nav-btn" onclick="navigate('os')">📝 OS</button>
+      <button class="mobile-nav-btn" onclick="navigate('vendas')">🛒 Vendas</button>
+    </nav>
+  </div>
+
+  <!-- MODAIS E FORMULÁRIOS -->
+  <div id="modal-cliente-opts" class="modal">
+    <div class="modal-content">
+      <h3>Ações do Cliente</h3>
+      <div class="modal-actions">
+        <button onclick="editarCliente()" class="btn-primary">Exibir/Modificar</button>
+        <button onclick="excluirCliente()" class="btn-danger">Excluir</button>
+        <button onclick="fecharModais()" class="btn-secondary">Cancelar</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="modal-estoque" class="modal">
+    <div class="modal-content large">
+      <h3 id="est-modal-title">Cadastrar Peça / Acessório</h3>
+      <form id="form-estoque" onsubmit="salvarEstoque(event)">
+        <input type="hidden" id="est-id">
+        <div class="form-grid">
+          <input type="text" id="est-descricao" placeholder="Descrição *" required>
+          <input type="number" step="0.01" id="est-preco-custo" placeholder="Preço de Custo">
+          <input type="number" step="0.01" id="est-preco-venda" placeholder="Preço de Venda">
+          <input type="number" id="est-quantidade" placeholder="Quantidade Entrada">
+          <input type="text" id="est-fornecedor" placeholder="Fornecedor">
+          <input type="text" id="est-categoria" placeholder="Categoria">
+          <select id="est-tipo">
+            <option value="Loja">Custo da Loja</option>
+            <option value="Cliente">Repasse ao Cliente</option>
+          </select>
+          <select id="est-disponibilidade">
+            <option value="Físico">Estoque Físico</option>
+            <option value="Catálogo">Catálogo</option>
+          </select>
+          <div class="form-group">
+            <label for="est-data-entrada">Data de Entrada:</label>
+            <input type="date" id="est-data-entrada" class="form-control">
+          </div>
+          <textarea id="est-observacoes" placeholder="Observações" style="grid-column: span 2;"></textarea>
+        </div>
+        <div class="modal-actions">
+          <button type="submit" class="btn-primary">Salvar</button>
+          <button type="button" onclick="excluirEstoque()" id="btn-del-est" class="btn-danger" style="display:none;">Excluir</button>
+          <button type="button" onclick="fecharModais()" class="btn-secondary">Cancelar</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <div id="modal-orcamento" class="modal">
+    <div class="modal-content large">
+      <h3>Orçamento</h3>
+      <form id="form-orcamento" onsubmit="salvarOrcamento(event)">
+        <input type="hidden" id="orc-id">
+        <div class="form-grid">
+          <select id="orc-cliente" required></select>
+          <input type="text" id="orc-aparelho" placeholder="Modelo / Marca Celular (Opcional)">
+          <input type="date" id="orc-data" required>
+          <input type="number" step="0.01" id="orc-mao-obra" placeholder="Valor Mão de Obra" onchange="calcularTotalOrcamento()">
+          <textarea id="orc-problema" placeholder="Descrição do Problema" style="grid-column: span 2;"></textarea>
+          <textarea id="orc-solucao" placeholder="Descrição da Solução" style="grid-column: span 2;"></textarea>
+          <textarea id="orc-observacoes" placeholder="Observações" style="grid-column: span 2;"></textarea>
+        </div>
+        <h4>Peças Necessárias</h4>
+        <div id="container-pecas-orc"></div>
+        <button type="button" class="btn-add-line" onclick="adicionarLinhaPeca('container-pecas-orc')">+ Adicionar Peça</button>
+        <div class="totais-box">
+          <p>Total Peças: R$ <span id="lbl-orc-val-pecas">0.00</span></p>
+          <p><strong>Total Geral: R$ <span id="lbl-orc-val-total">0.00</span></strong></p>
+        </div>
+        <div class="modal-actions">
+          <button type="submit" class="btn-primary">Salvar</button>
+          <button type="button" onclick="faturarOrcamento()" id="btn-fat-orc" class="btn-success" style="display:none;">Faturar Orçamento</button>
+          <button type="button" onclick="gerarPDFOrcamento()" id="btn-pdf-orc" class="btn-info" style="display:none;">Gerar PDF</button>
+          <button type="button" onclick="excluirOrcamento()" id="btn-del-orc" class="btn-danger" style="display:none;">Excluir</button>
+          <button type="button" onclick="fecharModais()" class="btn-secondary">Cancelar</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <div id="modal-os" class="modal">
+    <div class="modal-content large">
+      <h3>Ordem de Serviço (OS)</h3>
+      <form id="form-os" onsubmit="salvarOS(event)">
+        <input type="hidden" id="os-id">
+        <div class="form-grid">
+          <select id="os-cliente" required></select>
+          <input type="text" id="os-aparelho" placeholder="Modelo / Marca Celular (Opcional)">
+          <input type="date" id="os-data" required>
+          <select id="os-status">
+            <option value="Aberto">Aberto</option>
+            <option value="Em Andamento">Em Andamento</option>
+            <option value="Concluído">Concluído</option>
+            <option value="Cancelado">Cancelado</option>
+          </select>
+          <input type="number" step="0.01" id="os-mao-obra" placeholder="Valor Mão de Obra" onchange="calcularTotalOS()" style="grid-column: span 2;">
+          <textarea id="os-problema" placeholder="Descrição do Problema" style="grid-column: span 2;"></textarea>
+          <textarea id="os-solucao" placeholder="Descrição da Solução" style="grid-column: span 2;"></textarea>
+          <textarea id="os-observacoes" placeholder="Observações" style="grid-column: span 2;"></textarea>
+        </div>
+        <h4>Peças Necessárias</h4>
+        <div id="container-pecas-os"></div>
+        <button type="button" class="btn-add-line" onclick="adicionarLinhaPeca('container-pecas-os')">+ Adicionar Peça</button>
+        <div class="totais-box">
+          <p>Total Peças: R$ <span id="lbl-os-val-pecas">0.00</span></p>
+          <p><strong>Total Geral: R$ <span id="lbl-os-val-total">0.00</span></strong></p>
+        </div>
+        <div class="modal-actions">
+          <button type="submit" class="btn-primary">Salvar</button>
+          <button type="button" onclick="faturarOS()" id="btn-fat-os" class="btn-success" style="display:none;">Faturar OS</button>
+          <button type="button" onclick="gerarPDFOS()" id="btn-pdf-os" class="btn-info" style="display:none;">Gerar PDF</button>
+          <button type="button" onclick="excluirOS()" id="btn-del-os" class="btn-danger" style="display:none;">Excluir</button>
+          <button type="button" onclick="fecharModais()" class="btn-secondary">Cancelar</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <div id="modal-venda" class="modal">
+    <div class="modal-content large">
+      <h3>Cadastro de Venda</h3>
+      <form id="form-venda" onsubmit="salvarVenda(event)">
+        <input type="hidden" id="venda-id">
+        <div class="form-grid">
+          <select id="venda-cliente" required></select>
+          <input type="text" id="venda-aparelho" placeholder="Modelo / Marca Celular (Opcional)">
+          <input type="date" id="venda-data" required>
+          <select id="venda-tipo">
+            <option value="Venda Direta">Venda Direta</option>
+            <option value="Venda por OS">Venda por OS</option>
+            <option value="Venda por Orçamento">Venda por Orçamento</option>
+          </select>
+          <textarea id="venda-observacoes" placeholder="Observações" style="grid-column: span 2;"></textarea>
+        </div>
+        <h4>Peças / Acessórios Vendidos</h4>
+        <div id="container-pecas-venda"></div>
+        <button type="button" class="btn-add-line" onclick="adicionarLinhaPeca('container-pecas-venda')">+ Adicionar Item</button>
+        <div class="totais-box">
+          <p><strong>Total da Venda: R$ <span id="lbl-venda-val-total">0.00</span></strong></p>
+        </div>
+        <div class="modal-actions">
+          <button type="submit" class="btn-primary">Salvar</button>
+          <button type="button" onclick="gerarPDFVenda()" id="btn-pdf-venda" class="btn-info" style="display:none;">Gerar PDF</button>
+          <button type="button" onclick="excluirVenda()" id="btn-del-venda" class="btn-danger" style="display:none;">Excluir</button>
+          <button type="button" onclick="fecharModais()" class="btn-secondary">Cancelar</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <div id="modal-insumo" class="modal">
+    <div class="modal-content large">
+      <h3 id="ins-modal-title">Cadastrar Insumo</h3>
+      <form id="formInsumo" onsubmit="salvarInsumo(event)">
+        <input type="hidden" id="ins-id">
+        <div class="form-grid">
+          <input type="text" id="ins-descricao" placeholder="Descrição *" required>
+          <input type="number" id="ins-quantidade" placeholder="Quantidade *" required>
+          <input type="number" step="0.01" id="ins-preco-custo" placeholder="Preço de Custo (R$) *" required>
+          <input type="text" id="ins-fornecedor" placeholder="Fornecedor">
+          <div class="form-group">
+            <label for="ins-data">Data:</label>
+            <input type="date" id="ins-data" class="form-control" required>
+          </div>
+        </div>
+        <div class="modal-actions">
+          <button type="submit" class="btn-primary">Salvar</button>
+          <button type="button" onclick="excluirInsumo()" id="btnExcluirInsumo" class="btn-danger" style="display:none;">Excluir</button>
+          <button type="button" onclick="fecharModais()" class="btn-secondary">Cancelar</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <script src="script.js"></script>
+</body>
+</html>
